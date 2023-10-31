@@ -28,7 +28,7 @@ class Broker:
         initial_message = socket.recv(1024).decode()
         
         if "MARKET_CONSUMER" in initial_message:
-            market_name = initial_message.split()[1]  # Extraer el nombre del mercado
+            market_name = initial_message.split(",")[0]  # Extraer el nombre del mercado
             while not self.client_connected:
                 pass  # Espera hasta que un cliente esté conectado
             socket.sendall("CLIENT_CONNECTED".encode())  # Notifica al market consumer
