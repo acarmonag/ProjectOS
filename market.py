@@ -8,8 +8,9 @@ class MarketConsumer:
     def __init__(self, broker_host, broker_port, csv_file):
         self.broker_host = broker_host
         self.broker_port = broker_port
-        self.csv_file = os.path.join("MonedasCSV", csv_file)  # Utiliza el directorio MonedasCSV como ruta predeterminada
-        self.market_name = csv_file.split('.')[0]  # Asumimos que el nombre del mercado es el nombre del archivo sin extensión
+        self.csv_file = csv_file  # Ya no se añade "MonedasCSV" a la ruta
+        self.market_name = os.path.basename(csv_file).split('.')[0]  # Se extrae el nombre del archivo de la ruta completa
+
 
     def start(self):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
