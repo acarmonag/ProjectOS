@@ -1,6 +1,7 @@
 import socket
 from threading import Thread, Lock
 import os
+from datetime import *
 
 class Broker:
 
@@ -10,6 +11,7 @@ class Broker:
         self.client_connected = False
         self.lock = Lock()
         self.clients = []  # Lista para almacenar clientes conectados
+        self.all_data = []
         self.market_consumer_socket = None
         self.cache_directory = "caches"
         if not os.path.exists(self.cache_directory):
@@ -32,7 +34,7 @@ class Broker:
             while not self.client_connected:
                 pass  # Espera hasta que un cliente esté conectado
             socket.sendall("CLIENT_CONNECTED".encode())  # Notifica al market consumer
-
+            
             # Recibe datos del market consumer y los envía a todos los clientes conectados
             while True:
                 data = socket.recv(1024).decode()
@@ -43,6 +45,11 @@ class Broker:
                         f_all.write(data + '\n')  # Store data with market name for clarity
                     with open(os.path.join(self.cache_directory, f'{market_name}.csv'), 'a') as f_market:  # Adjuntar datos al CSV específico del mercado
                         f_market.write(data + '\n')
+                        self.all_data.append(data)  # Añadir datos a la lista en memoria
+                        self.all_data.sort(key=lambda x: datetime.strptime(x.split(',')[1], '%Y-%m-%d %H:%M'))  # Ordenar datos por fecha
+                    with open(os.path.join(self.cache_directory, 'days_sorted.csv'), 'w') as f_sorted:  # Abrir archivo CSV para escribir datos ordenados
+                        for line in self.all_data:
+                            f_sorted.write(line + '\n')  # Escribir datos en el archivo
                 for client in self.clients:
                     client.sendall(data.encode())
 
