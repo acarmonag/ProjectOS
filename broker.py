@@ -65,7 +65,7 @@ class Broker:
                         for line in self.all_data:
                             f_sorted.write(line + '\n')  # Escribir datos en el archivo
                 for client in self.clients:
-                    client.sendall(data.encode())
+                    client.sendall((f"{data}\n".encode()))
 
         elif initial_message == "CLIENT":
             self.client_connected = True
