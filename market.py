@@ -20,11 +20,13 @@ class MarketConsumer:
             # Espera la confirmación del broker
             confirmation = s.recv(1024).decode()
             if confirmation == "CLIENT_CONNECTED":
+                index = 0  # Iniciar un índice
                 with open(self.csv_file, 'r') as file:
                     for line in file:
-                        s.sendall(f"{self.market_name},{line.strip()}\n".encode())  # Envía los datos con el nombre del mercado
+                        s.sendall(f"{self.market_name},{index},{line.strip()}\n".encode())  # Envía los datos con el nombre del mercado
+                        index += 1
                         time.sleep(1)  # Envía los datos línea por línea con un intervalo
-
+                        
 if __name__ == "__main__":
     broker_host = "localhost"
     broker_port = 54321

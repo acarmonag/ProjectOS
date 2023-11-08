@@ -60,7 +60,7 @@ class Broker:
                     with open(os.path.join(self.cache_directory, f'{market_name}.csv'), 'a') as f_market:  # Adjuntar datos al CSV específico del mercado
                         f_market.write(data)
                         self.all_data.append(data)  # Añadir datos a la lista en memoria
-                        self.all_data.sort(key=lambda x: datetime.strptime(x.split(',')[1], '%Y-%m-%d %H:%M'))  # Ordenar datos por fecha
+                        self.all_data.sort(key=lambda x: datetime.strptime(x.split(',')[2], '%Y-%m-%d %H:%M'))  # Ordenar datos por fecha
                     with open(os.path.join(self.cache_directory, 'date_sorted.csv'), 'w') as f_sorted:  # Abrir archivo CSV para escribir datos ordenados
                         for line in self.all_data:
                             f_sorted.write(line)  # Escribir datos en el archivo
