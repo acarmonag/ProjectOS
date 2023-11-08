@@ -56,16 +56,16 @@ class Broker:
                     break
                 with self.lock:  # Ensure synchronization while writing to the CSV
                     with open(os.path.join(self.cache_directory, 'all_data.csv'), 'a') as f_all:  # Adjuntar datos al CSV general
-                        f_all.write(data + '\n')  # Store data with market name for clarity
+                        f_all.write(data)  # Store data with market name for clarity
                     with open(os.path.join(self.cache_directory, f'{market_name}.csv'), 'a') as f_market:  # Adjuntar datos al CSV específico del mercado
-                        f_market.write(data + '\n')
+                        f_market.write(data)
                         self.all_data.append(data)  # Añadir datos a la lista en memoria
                         self.all_data.sort(key=lambda x: datetime.strptime(x.split(',')[1], '%Y-%m-%d %H:%M'))  # Ordenar datos por fecha
                     with open(os.path.join(self.cache_directory, 'date_sorted.csv'), 'w') as f_sorted:  # Abrir archivo CSV para escribir datos ordenados
                         for line in self.all_data:
-                            f_sorted.write(line + '\n')  # Escribir datos en el archivo
+                            f_sorted.write(line)  # Escribir datos en el archivo
                 for client in self.clients:
-                    client.sendall((f"{data}\n".encode()))
+                    client.sendall((data.encode()))
 
         elif initial_message == "CLIENT":
             self.client_connected = True
