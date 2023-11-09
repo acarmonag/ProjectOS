@@ -67,7 +67,7 @@ class Client:
             'Close': float(close),
             'Volume': int(volume),
         }
-        df = df._append(new_row, ignore_index=True)
+        df.loc[len(df)] = new_row
         df['SMA5'] = df['Close'].rolling(window=5).mean()
         df['SMA13'] = df['Close'].rolling(window=13).mean()
 
