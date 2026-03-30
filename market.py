@@ -1,41 +1,126 @@
-import socket
-import time
-import sys
+"""
+MarketConsumer module for the ProjectOS market data streaming system.
+
+Reads an OHLCV CSV file row by row and streams each tick to the broker
+over a TCP socket, one row per second.
+
+TCP_NODELAY is enabled so each tick is transmitted immediately without
+Nagle's algorithm batching small packets.
+"""
+
+import logging
 import os
+import signal
+import socket
+import sys
+import time
+
+from config import HOST, PORT, BUFFER_SIZE, TICK_INTERVAL
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
 
 class MarketConsumer:
+    """Streams OHLCV rows from a CSV file to the broker one tick at a time.
 
-    def __init__(self, broker_host, broker_port, csv_file):
+    Each row is prefixed with the market name and a sequential index so that
+    the broker and clients can identify the data source.
+    """
+
+    def __init__(
+        self, broker_host: str, broker_port: int, csv_file: str
+    ) -> None:
         self.broker_host = broker_host
         self.broker_port = broker_port
-        self.csv_file = csv_file  # Ya no se añade "MonedasCSV" a la ruta
-        self.market_name = os.path.basename(csv_file).split('.')[0]  # Se extrae el nombre del archivo de la ruta completa
+        self.csv_file = csv_file
+        self.market_name: str = os.path.basename(csv_file).split(".")[0]
+        self._running = True
+
+    def start(self) -> None:
+        """Validate the CSV file, connect to the broker, and begin streaming."""
+        if not os.path.isfile(self.csv_file):
+            logger.error("CSV file not found: %s", self.csv_file)
+            sys.exit(1)
+
+        def _signal_handler(sig, frame) -> None:
+            logger.info(
+                "SIGINT received — stopping MarketConsumer %s.", self.market_name
+            )
+            self._running = False
+
+        signal.signal(signal.SIGINT, _signal_handler)
+
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                # Disable Nagle's algorithm — send each tick immediately.
+                s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                s.connect((self.broker_host, self.broker_port))
+                logger.info(
+                    "MarketConsumer %s connected to broker.", self.market_name
+                )
+                s.sendall(f"MARKET_CONSUMER_{self.market_name}".encode())
+
+                confirmation = s.recv(BUFFER_SIZE).decode()
+                if confirmation != "CLIENT_CONNECTED":
+                    logger.error(
+                        "Unexpected broker response: %r — aborting.", confirmation
+                    )
+                    return
+
+                logger.info(
+                    "Client confirmed — starting stream for %s.", self.market_name
+                )
+                self._stream(s)
+
+        except ConnectionRefusedError:
+            logger.error(
+                "Cannot connect to broker at %s:%s.", self.broker_host, self.broker_port
+            )
+        except OSError as exc:
+            logger.error(
+                "Socket error in MarketConsumer %s: %s", self.market_name, exc
+            )
+
+    def _stream(self, s: socket.socket) -> None:
+        """Read the CSV and send each row to the broker with a fixed delay.
+
+        Args:
+            s: The connected broker socket.
+        """
+        try:
+            with open(self.csv_file, "r") as file:
+                for index, line in enumerate(file):
+                    if not self._running:
+                        break
+                    payload = f"{self.market_name},{index},{line.strip()}\n"
+                    try:
+                        s.sendall(payload.encode())
+                    except OSError as exc:
+                        logger.error(
+                            "Send failed for %s at row %d: %s",
+                            self.market_name, index, exc,
+                        )
+                        break
+                    time.sleep(TICK_INTERVAL)
+        except OSError as exc:
+            logger.error("Cannot read CSV file %s: %s", self.csv_file, exc)
+
+        logger.info("MarketConsumer %s finished streaming.", self.market_name)
 
 
-    def start(self):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.connect((self.broker_host, self.broker_port))
-            s.sendall(f"MARKET_CONSUMER_{self.market_name}".encode())  # Envía el nombre del mercado al broker
-
-            # Espera la confirmación del broker
-            confirmation = s.recv(1024).decode()
-            if confirmation == "CLIENT_CONNECTED":
-                index = 0  # Iniciar un índice
-                with open(self.csv_file, 'r') as file:
-                    for line in file:
-                        s.sendall(f"{self.market_name},{index},{line.strip()}\n".encode())  # Envía los datos con el nombre del mercado
-                        index += 1
-                        time.sleep(1)  # Envía los datos línea por línea con un intervalo
-                        
 if __name__ == "__main__":
-    broker_host = "localhost"
-    broker_port = 54321
-    
     if len(sys.argv) < 2:
-        print("Por favor, proporcione el nombre del archivo CSV como argumento.")
+        logger.error("Usage: python market.py <csv_file>")
         sys.exit(1)
 
-    csv_file = sys.argv[1]  # Obtiene el nombre del archivo CSV desde el argumento de la línea de comandos
-
-    mc = MarketConsumer(broker_host, broker_port, csv_file)
+    csv_file = sys.argv[1]
+    mc = MarketConsumer(HOST, PORT, csv_file)
     mc.start()

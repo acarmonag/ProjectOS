@@ -1,111 +1,126 @@
-# ProjectOS — Real-Time Market Data Broker
+# ProjectOS — Real-Time Market Data Streaming
 
-A real-time market data broker built from scratch in Python using raw TCP sockets and a custom pub-sub architecture. Streams OHLCV (candlestick) data for 65+ currency pairs and commodities across 7 timeframes, with live visualization and technical indicators.
-
-No external broker dependencies — no Kafka, no RabbitMQ, no Redis.
+A broker-based system that streams OHLCV (candlestick) data for multiple currency pairs and commodities and visualises them live in a 3×3 chart grid with SMA overlays.
 
 ---
 
 ## Architecture
 
 ```
-MonedasCSV/
-(65 OHLCV files)
-      │
-      ▼
-┌─────────────────────────────────────┐
-│  market.py  (Producer)              │
-│  Replays CSV files line-by-line     │
-│  Spawns parallel MarketConsumer     │
-│  processes per timeframe            │
-└──────────────┬──────────────────────┘
-               │  TCP push
-               ▼
-┌─────────────────────────────────────┐
-│  broker.py  (TCP Broker)            │
-│  Accepts producers + consumers      │
-│  Routes data to subscribers         │
-│  Thread-safe CSV cache writes       │
-│  .cache/ ← runtime CSV output       │
-└──────────────┬──────────────────────┘
-               │  TCP subscribe
-               ▼
-┌─────────────────────────────────────┐
-│  client.py  (Subscriber)            │
-│  Live 3×3 candlestick grid          │
-│  SMA(5) + SMA(13) per tick          │
-│  Last 20 candles kept in memory     │
-└─────────────────────────────────────┘
+MarketConsumer(s)  ──►  Broker  ──►  Client
+  (producers)        (TCP hub)    (subscriber + charts)
 ```
 
----
+- **`broker.py`** — Central TCP broker. Accepts connections from producers and subscribers, caches every tick to CSV, and fans data out to all connected clients via per-client queues.
+- **`market.py`** — Producer. Replays an OHLCV CSV file row by row (one tick per second) and streams each row to the broker.
+- **`client.py`** — Subscriber. Renders a live 3×3 candlestick grid (up to 9 markets) with SMA(5) and SMA(13) overlays.
+- **`config.py`** — Single source of truth for all shared constants (host, port, buffer size, chart settings, etc.).
 
-## Features
-
-- **Custom pub-sub over TCP** — producers push data to the broker, consumers subscribe and receive routed updates. No external message broker required.
-- **65+ instruments** — currency pairs and commodities across 7 timeframes: M1, M5, M15, M30, H1, H4, D1
-- **Parallel timeframe streaming** — `market.py` spawns independent `MarketConsumer` processes per timeframe, enabling concurrent multi-timeframe feeds
-- **Thread-safe writes** — concurrent producers write to `.cache/` CSV files with locks to prevent data corruption
-- **Live candlestick UI** — `client.py` renders a 3×3 grid of live mplfinance charts, recalculating SMA(5) and SMA(13) on every incoming tick
-- **Memory-bounded client** — only the last 20 candles are kept in memory per instrument to maintain UI responsiveness
+The broker spawns all MarketConsumer subprocesses automatically — you only need to start the broker and the client.
 
 ---
 
-## Stack
+## Requirements
 
-`Python 3` `socket` `threading` `pandas` `matplotlib` `mplfinance`
-
----
-
-## Project structure
-
-```
-broker.py           # TCP broker — routes data between producers and consumers
-market.py           # Producer — replays OHLCV CSV files line-by-line to broker
-client.py           # Consumer — live candlestick grid with SMA indicators
-MonedasCSV/         # 65 OHLCV data files across 7 timeframes (M1 → D1)
-.cache/             # Runtime CSV output written by the broker
-```
+- Python 3.9+
+- `numpy`
+- `matplotlib`
+- `mplfinance`
 
 ---
 
-## Quickstart
+## Setup
 
-**Start the broker:**
 ```bash
-python broker.py
+python3 -m venv venv
+venv/bin/pip install -r requirements.txt
 ```
-
-**Start a market producer** (replays CSV data into the broker):
-```bash
-python market.py
-```
-
-**Start the live client** (connects to broker and renders charts):
-```bash
-python client.py
-```
-
-All three components connect over localhost TCP. Start them in this order: broker → market → client.
 
 ---
 
-## Key design decisions
+## Running
 
-**Raw TCP over a message broker** — intentionally avoids Kafka, RabbitMQ, or any external dependency. The broker implements the pub-sub pattern at the socket level, making the architecture transparent and portable.
+**Terminal 1 — start the broker:**
+```bash
+venv/bin/python3 broker.py
+```
+Select a timeframe period when prompted (e.g. `H1`). The broker spawns one MarketConsumer subprocess per matching CSV file automatically.
 
-**Process-per-timeframe parallelism** — each timeframe runs in its own `MarketConsumer` process rather than a thread, avoiding GIL contention when replaying multiple CSV streams simultaneously.
+**Terminal 2 — start the client:**
+```bash
+venv/bin/python3 client.py
+```
+A matplotlib window opens and populates with candlestick charts as ticks arrive.
 
-**Bounded client memory** — the client discards candles older than the last 20, keeping chart rendering fast regardless of session length.
-
-**Lock-guarded CSV cache** — when multiple producers write concurrently, file writes are protected with threading locks to ensure consistent output in `.cache/`.
+> The broker holds MarketConsumers in a ready state until the client connects, so start the client shortly after the broker.
 
 ---
 
-## What I'd improve in a production setup
+## Data
 
-- Replace the custom TCP pub-sub with a proper message broker (NATS or Redis Streams) for persistence and delivery guarantees
-- Add a WebSocket layer so the client can run in a browser instead of a local matplotlib window
-- Implement backpressure — currently fast producers can overwhelm slow consumers
-- Add reconnection logic to the client and market producer on broker disconnect
-- Stream real-time data from a market API instead of replaying CSV files
+CSV files live in `MonedasCSV/` and follow the naming convention `<MARKET>_<PERIOD>.csv` (e.g. `BTCUSD_H1.csv`).
+
+Available periods: `M1`, `M5`, `M15`, `M30`, `H1`, `H4`, `D1`
+
+Each file contains OHLCV rows with timestamps in `YYYY-MM-DD HH:MM` format.
+
+---
+
+## Cache
+
+The broker writes three files to `caches/` at runtime. Stale files from a previous run are removed automatically on startup.
+
+| File | Contents |
+|---|---|
+| `all_data.csv` | Every tick from every market, appended in arrival order |
+| `<MARKET>.csv` | Ticks for a single market |
+| `date_sorted.csv` | All ticks sorted by timestamp, rewritten on each tick |
+
+---
+
+## Configuration
+
+All tuneable values live in `config.py` — one change applies everywhere.
+
+| Constant | Default | Description |
+|---|---|---|
+| `HOST` / `PORT` | `localhost:54321` | Broker bind address |
+| `BUFFER_SIZE` | `4096` | TCP receive buffer (bytes) |
+| `TICK_INTERVAL` | `1.0` s | Delay between ticks (market.py) |
+| `ALL_DATA_MAXLEN` | `100 000` | Max ticks kept in memory (broker) |
+| `CLIENT_QUEUE_MAXSIZE` | `500` | Per-client send-queue depth before drops |
+| `MAX_MARKETS` | `9` | Max charts in the grid |
+| `MAX_CANDLES` | `20` | Rolling candle window per chart |
+| `SMA_SHORT` / `SMA_LONG` | `5` / `13` | SMA periods |
+| `RECONNECT_DELAY` | `5.0` s | Retry interval if broker drops |
+
+---
+
+## Changelog
+
+### v3 — Performance pass
+
+- **`config.py`** — all constants extracted to a single shared module; no more per-file duplication.
+- **Numpy circular buffer** — client stores each market's data in a pre-allocated `(MAX_CANDLES, 7)` numpy array. New ticks overwrite the oldest slot (O(1), zero allocation). `pandas` is no longer needed in the client.
+- **`np.convolve` SMA** — replaces `pandas .rolling().mean()`; pure numpy, no object overhead.
+- **`canvas.draw_idle()`** — coalesces all per-market redraws within a `plt.pause()` cycle into one render pass, eliminating redundant full-figure redraws.
+- **`bisect.insort`** — broker maintains `all_data` in sorted order via O(n) insertion instead of O(n log n) `.sort()` on every tick.
+- **Lock scope reduced** — broker lock held only for fast in-memory pointer ops; all file I/O runs outside the lock so concurrent producers don't block each other.
+- **Per-client send queue** — each client gets a bounded `queue.Queue`; the handler thread drains it independently. Slow clients drop ticks instead of stalling the entire pipeline.
+- **`subprocess.Popen`** — market-consumer processes are fire-and-forget; no thread is wasted blocking on `subprocess.run`.
+- **Partial-read buffering** in broker — ticks split across two `recv` calls are reassembled correctly.
+- **`BUFFER_SIZE` raised to 4096** — fewer syscalls per tick.
+- **`TCP_NODELAY`** on market-consumer sockets — disables Nagle's algorithm so each tick is transmitted immediately.
+- **Cache cleared on startup** — stale CSV files from previous runs are removed automatically.
+- **`ALL_DATA_MAXLEN` cap** — in-memory sorted list bounded at 100 000 entries to prevent OOM on long runs.
+
+### v2 — Robustness pass
+
+- **Logging** — all `print()` replaced with Python `logging`; timestamps and levels on every message.
+- **Error handling** — `try/except` on all socket operations, file I/O, and tick parsing.
+- **No busy-wait** — broker's `while not connected: pass` replaced with `threading.Event.wait()`.
+- **Race condition fix** — client list copied under lock before broadcast; dead clients removed cleanly.
+- **Reconnection** — client reconnects automatically if the broker drops.
+- **Graceful shutdown** — all three processes handle `Ctrl+C` (SIGINT) cleanly.
+- **Type hints & docstrings** — added to all classes and functions.
+- **`sys.executable`** — broker spawns subprocesses using the active Python interpreter.
